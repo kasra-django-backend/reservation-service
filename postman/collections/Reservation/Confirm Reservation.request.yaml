@@ -1,0 +1,17 @@
+$kind: http-request
+url: http://localhost:8000/api/reservations/5/confirm/
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"id\": 4,\r
+
+    \  \"status\": \"CONFIRMED\"\r
+
+    }"
+auth:
+  type: bearer
+  credentials:
+    token: "{{json_web_token_15hm}}"
+order: 5000

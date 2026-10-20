@@ -46,6 +46,7 @@ class Reservation(models.Model):
     def __str__(self):
         return f"Reservation#{self.pk} [{self.status}] {self.quantity}x{self.product_id}"
 
+    # عطربیوتی ک میاد میگه ایا منقظی شده یا نه 
     @property
     def is_expired(self):
         return self.status == ReservationStatus.PENDING and timezone.now() >= self.expires_at

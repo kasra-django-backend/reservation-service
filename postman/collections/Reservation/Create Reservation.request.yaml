@@ -1,0 +1,17 @@
+$kind: http-request
+url: http://localhost:8000/api/reservations/
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"product_id\": 4,\r
+
+    \  \"quantity\": 1\r
+
+    }"
+auth:
+  type: bearer
+  credentials:
+    token: "{{json_web_token_15hm}}"
+order: 4000

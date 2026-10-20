@@ -36,7 +36,7 @@ class ReservationListCreateView(APIView):
         idempotency_key = request.headers.get("Idempotency-Key")
 
         try:
-            reservation = services.create_reservation(
+            reservation = services.create_reservation(     #رزرو ایجادشده را دریافت می‌کند
                 user=request.user,
                 product_id=data["product_id"],
                 quantity=data["quantity"],
@@ -44,7 +44,7 @@ class ReservationListCreateView(APIView):
             )
         except DomainError as e:
             # Let the custom exception handler format it
-            raise
+            raise # خطا را دوباره پرتاب می‌کند تا مدیریت نهایی آن به Exception Handler واگذار شود.
 
         out = ReservationSerializer(reservation)
         return Response(out.data, status=status.HTTP_201_CREATED)
@@ -68,6 +68,7 @@ class ReservationDetailView(APIView):
     def get(self, request, pk):
         reservation = self.get_object(request, pk)
         return Response(ReservationSerializer(reservation).data)
+        # اطلاعات رزرو را سریالایز کرده و با پاسخ HTTP 200 برمی‌گرداند.
 
 
 class ReservationConfirmView(APIView):
@@ -77,6 +78,7 @@ class ReservationConfirmView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
+        # سرویس تأیید رزرو را برای کاربر فعلی اجرا کرده و سفارش را دریافت می‌کند.
         order = services.confirm_reservation(user=request.user, reservation_id=pk)
         return Response(OrderSerializer(order).data, status=status.HTTP_200_OK)
 

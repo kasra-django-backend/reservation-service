@@ -1,0 +1,8 @@
+$kind: http-request
+url: http://localhost:8000/api/products/
+method: GET
+auth:
+  type: bearer
+  credentials:
+    token: "{{json_web_token_15hm}}"
+order: 3000

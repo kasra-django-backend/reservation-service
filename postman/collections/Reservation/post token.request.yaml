@@ -1,0 +1,13 @@
+$kind: http-request
+url: http://localhost:8000/api/auth/token/
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"username\": \"kasra\",\r
+
+    \  \"password\": \"kasra\"\r
+
+    }"
+order: 2000

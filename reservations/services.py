@@ -32,6 +32,7 @@ RESERVATION_TTL_MINUTES = getattr(settings, "RESERVATION_TTL_MINUTES", 10)
 # ============================================================
 # State transition map — single source of truth
 # ============================================================
+# دیکشنری که مشخص می‌کند از هر وضعیت به چه وضعیتی می‌توان رفت.
 ALLOWED_TRANSITIONS = {
     ReservationStatus.PENDING: {
         ReservationStatus.CONFIRMED,
@@ -43,25 +44,30 @@ ALLOWED_TRANSITIONS = {
     ReservationStatus.CANCELLED: set(),
 }
 
-
+# تابعی که چک می‌کند آیا ترنزیشن مجاز است یا نه.
 def _assert_transition(current: str, target: str) -> None:
     """Raise if transition is not allowed."""
     if target not in ALLOWED_TRANSITIONS.get(current, set()):
+        # اگر ترنزیشن در نقشه مجاز نبود..
         logger.warning(
             "Invalid state transition attempted: %s -> %s (reservation_id=%s)",
             current, target, getattr(_assert_transition, "_current_id", "?"),
         )
+        # لاگ هشدار برای ترنزیشن غیرمجاز ثبت می‌شود.
         raise InvalidStateTransitionError(
             message=f"Cannot transition from {current} to {target}."
         )
+        # خطای ترنزیشن نامعتبر پرتاب می‌شود.
 
 
 # ============================================================
 # IDEMPOTENCY
 # ============================================================
+# تشخیص می‌دهد آیا این درخواست تکراری است یا نه؛ خروجی: رکورد کلید + رزرو موجود.
 def _resolve_idempotency(
     user, key: str | None, request_fingerprint: dict
 ) -> tuple[IdempotencyKey | None, Reservation | None]:
+    # خروجی تابع یک رکورد کلید و یک رزرو موجوده که هرکدوم می‌تونن None باشن
     """
     Returns (record, existing_reservation).
 
@@ -77,9 +83,11 @@ def _resolve_idempotency(
         uuid_key = UUID(str(key))
     except (ValueError, TypeError):
         raise IdempotencyConflictError(message="Idempotency-Key must be a valid UUID.")
+        # خطای اختصاصی ایجاد می‌کنه که می‌گه کلید باید UUID معتبر باشه.
 
     try:
         with transaction.atomic():
+            # یک تراکنش دیتابیس شروع می‌کنه تا عملیات داخلش به‌صورت اتمیک انجام بشه.
             record = IdempotencyKey.objects.create(
                 user=user,
                 key=uuid_key,
@@ -87,8 +95,11 @@ def _resolve_idempotency(
             )
         logger.info("Idempotency key registered: user=%s key=%s", user.id, uuid_key)
         return record, None
+        # رکورد جدید رو برمی‌گردونه و اعلام می‌کنه رزرو قبلی پیدا نشده.
+
     except IntegrityError:
         # Key already exists — check if it has a reservation
+        # اگر ایجاد رکورد به‌خاطر خطای یکپارچگی دیتابیس، مثلاً تکراری بودن ترکیب کاربر و کلید، شکست بخوره، خطا رو می‌گیره.
         record = IdempotencyKey.objects.select_for_update().get(
             user=user, key=uuid_key
         )
@@ -96,16 +107,20 @@ def _resolve_idempotency(
             logger.info(
                 "Idempotency replay: user=%s key=%s -> reservation=%s",
                 user.id, uuid_key, record.reservation_id,
+                # استفاده مجدد از کلیدی که رزرو داره رو در لاگ ثبت می‌کنه
             )
             return record, record.reservation
+        # رکورد کلید و رزرو قبلی رو برمی‌گردونه تا رزرو تکراری ساخته نشه.
         # In-flight (another request holds the key but hasn't finished)
         logger.warning("Idempotency in-flight conflict: user=%s key=%s", user.id, uuid_key)
         raise IdempotencyConflictError()
+        # خطای تعارض ایجاد می‌کنه، چون درخواست قبلی با همین کلید هنوز نتیجه نهایی نداره.
 
 
 # ============================================================
 # CREATE RESERVATION
 # ============================================================
+# تمام عملیات دیتابیس این تابع رو در یک تراکنش قرار می‌ده تا در صورت خطا، تغییرات انجام‌شده در تراکنش برگردونده بشن؛ به این می‌گن Atomicity.
 @transaction.atomic
 def create_reservation(
     *,
@@ -126,9 +141,11 @@ def create_reservation(
     """
     fingerprint = {"product_id": product_id, "quantity": quantity}
     record, existing = _resolve_idempotency(user, idempotency_key, fingerprint)
+    # کلید درخواست رو بررسی می‌کنه تا مشخص بشه درخواست قبلاً پردازش شده یا نه.
+
     if existing is not None:
         return existing
-
+    # اگر رزرو قبلی وجود داشته باشه، همون رو برمی‌گردونه و رزرو جدیدی نمی‌سازه.
     # --- Lock the product row to prevent overselling ---
     try:
         product = (
@@ -141,6 +158,7 @@ def create_reservation(
     if product.stock < quantity:
         logger.warning(
             "Reservation rejected: insufficient stock. user=%s product=%s requested=%s available=%s",
+            # قالب پیام هشدار رو مشخص می‌کنه که اطلاعات درخواست و موجودی رو ثبت می‌کنه.
             user.id, product_id, quantity, product.stock,
         )
         raise InsufficientStockError(
@@ -148,6 +166,7 @@ def create_reservation(
         )
 
     # --- Decrement stock atomically ---
+    # موجودی محصول رو به‌اندازه تعداد رزروشده کاهش می‌ده.
     product.stock -= quantity
     product.save(update_fields=["stock"])
 
@@ -158,11 +177,14 @@ def create_reservation(
         product=product,
         quantity=quantity,
         status=ReservationStatus.PENDING,
+        # زمان انقضای رزرو رو با اضافه کردن مدت اعتبار به زمان فعلی محاسبه می‌کنه.
         expires_at=now + timedelta(minutes=RESERVATION_TTL_MINUTES),
     )
 
     # --- Link to idempotency record ---
+    # بررسی می‌کنه آیا برای درخواست، رکورد Idempotency ساخته شده.
     if record is not None:
+        # رزرو جدید رو به رکورد Idempotency مرتبط می‌کنه.
         record.reservation = reservation
         record.response_status = 201
         record.save(update_fields=["reservation", "response_status"])
@@ -194,15 +216,18 @@ def confirm_reservation(*, user, reservation_id: int):
 
     # Late expiry check
     if reservation.status == ReservationStatus.PENDING and reservation.is_expired:
+        # رزرو رو منقضی می‌کنه و موجودی محصول رو آزاد می‌کنه.
         _expire_locked(reservation)
         raise ReservationExpiredError()
 
+    # بررسی می‌کنه تغییر وضعیت فعلی رزرو به CONFIRMED مجاز باشه.
     _assert_transition(reservation.status, ReservationStatus.CONFIRMED)
 
     # Late import to avoid circulars
     from orders.models import Order, OrderStatus
 
     # OneToOneField guarantees only one order can exist
+    # سفارش مرتبط رو پیدا می‌کنه یا اگر وجود نداشته باشه، ایجادش می‌کنه.
     order, created = Order.objects.get_or_create(
         reservation=reservation,
         defaults={"user": user, "status": OrderStatus.CREATED},
@@ -216,12 +241,15 @@ def confirm_reservation(*, user, reservation_id: int):
     reservation.save(update_fields=["status", "updated_at"])
 
     return order
+    # سفارش ایجادشده یا سفارش موجود رو برمی‌گردونه
 
 
 # ============================================================
 # CANCEL RESERVATION
 # ============================================================
 @transaction.atomic
+
+# هدف تابع، لغو رزرو در انتظار و آزاد کردن موجودی است.
 def cancel_reservation(*, user, reservation_id: int) -> Reservation:
     """Cancel a PENDING reservation and release stock."""
     try:
@@ -235,11 +263,14 @@ def cancel_reservation(*, user, reservation_id: int) -> Reservation:
 
     if reservation.status == ReservationStatus.PENDING and reservation.is_expired:
         _expire_locked(reservation)
+        # موجودی را برمی‌گرداند
         raise ReservationExpiredError()
-
+    
+    # لغو رزرو از وضعیت فعلی مجاز باشد
     _assert_transition(reservation.status, ReservationStatus.CANCELLED)
 
     # Release stock
+    # آزاد کردن موجودی
     product = Product.objects.select_for_update().get(pk=reservation.product_id)
     product.stock += reservation.quantity
     product.save(update_fields=["stock"])
@@ -257,8 +288,11 @@ def cancel_reservation(*, user, reservation_id: int) -> Reservation:
 # ============================================================
 # EXPIRATION
 # ============================================================
+# تابعی برای منقضی کردن رزرو و آزاد کردن موجودی است.
 def _expire_locked(reservation: Reservation) -> None:
     """Expire a reservation assumed already locked. Releases stock."""
+    #   رزرو از قبل قفل شده و موجودی آن باید آزاد شود
+
     product = Product.objects.select_for_update().get(pk=reservation.product_id)
     product.stock += reservation.quantity
     product.save(update_fields=["stock"])
@@ -270,7 +304,7 @@ def _expire_locked(reservation: Reservation) -> None:
         reservation.id, reservation.user_id, reservation.quantity, product.stock,
     )
 
-
+# تابعی برای منقضی کردن گروهی رزروهای منقضی‌شده است و تعدادشان را برمی‌گرداند.
 def expire_pending_reservations() -> int:
     """
     Batch-expire overdue PENDING reservations.
@@ -281,12 +315,14 @@ def expire_pending_reservations() -> int:
         Reservation.objects.filter(
             status=ReservationStatus.PENDING,
             expires_at__lte=now,
+            # زروهایی را انتخاب می‌کند که زمان انقضایشان گذشته یا برابر زمان فعلی است
         ).values_list("id", flat=True)
     )
     count = 0
     for rid in overdue_ids:
         try:
             with transaction.atomic():
+                # عملیات مربوط به هر رزرو را در یک تراکنش جداگانه انجام می‌دهد.
                 reservation = (
                     Reservation.objects.select_for_update()
                     .select_related("product")
@@ -297,9 +333,12 @@ def expire_pending_reservations() -> int:
                 if reservation.expires_at > timezone.now():
                     continue
                 _expire_locked(reservation)
+                # رزرو را منقضی می‌کند و موجودی محصول را آزاد می‌کند
                 count += 1
         except Reservation.DoesNotExist:
             continue
+        
+    # حداقل یک رزرو منقضی شده باشد
     if count:
         logger.info("Expired %s reservation(s)", count)
     return count

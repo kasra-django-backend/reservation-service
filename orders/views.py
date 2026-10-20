@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from .models import Order
 from .serializers import OrderSerializer
 
-
+# لیست سفارش‌های کاربر
 class OrderListView(APIView):
     """GET /api/orders/ — current user's orders."""
     permission_classes = [IsAuthenticated]

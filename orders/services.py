@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
+# لغو سفارش کاربر با شناسه مشخص
 def cancel_order(*, user, order_id: int) -> Order:
     """
     Cancel an order. Only allowed from CREATED.

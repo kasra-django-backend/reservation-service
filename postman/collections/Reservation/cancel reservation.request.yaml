@@ -1,4 +1,8 @@
 $kind: http-request
-url: ""
-method: GET
+url: http://localhost:8000/api/reservations/8/cancel/
+method: POST
+auth:
+  type: bearer
+  credentials:
+    token: "{{json_web_token_07dx}}"
 order: 8000
